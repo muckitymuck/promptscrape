@@ -1,3 +1,9 @@
+"""
+Site Mapper - A tool for crawling websites and creating relevance-based site maps
+This script crawls websites, evaluates page relevance using AI, and generates 
+visual and textual reports of the site structure.
+"""
+
 import os
 import sys
 import json
@@ -28,6 +34,12 @@ load_dotenv()
 # Configure Gemini
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 
+"""
+Data model for representing pages in the site map.
+Each node contains metadata about a URL including its relevance to the search query,
+content summary, and relationships to other pages.
+"""
+
 class LinkNode(BaseModel):
     """Model for a link node in the site map"""
     url: str = Field(..., description="The URL of the page")
@@ -39,6 +51,11 @@ class LinkNode(BaseModel):
     depth: int = Field(0, description="Depth level from the base URL")
     visited: bool = Field(False, description="Whether this link has been visited")
     parent_url: str = Field(None, description="The parent URL that led to this URL")
+
+"""
+Main crawler class that handles site mapping operations.
+Manages the crawling process, content evaluation, and report generation.
+"""
 
 class SiteMapper:
     def __init__(self, base_url: str, search_prompt: str, max_depth: int = 3, max_pages: int = 50):
@@ -62,6 +79,13 @@ class SiteMapper:
         print(f"Maximum depth: {max_depth}")
         print(f"Maximum pages: {max_pages}")
     
+    """
+    Standardizes URLs to ensure consistent format and handling.
+    - Resolves relative URLs to absolute
+    - Handles special cases for specific domains
+    - Cleans tracking parameters
+    - Fixes common URL formatting issues
+    """
     def normalize_url(self, url: str, parent_url: str = None) -> str:
         """Normalize the URL to handle relative paths and ensure proper format"""
         # Handle empty URLs
@@ -131,6 +155,13 @@ class SiteMapper:
         
         return url
     
+    """
+    Determines if a URL should be crawled based on:
+    - Domain matching (including subdomains)
+    - File extensions (skips media/resource files)
+    - URL patterns (skips login, admin, etc.)
+    - Query parameters
+    """
     def is_valid_url(self, url: str) -> bool:
         """Check if the URL is valid and should be crawled"""
         if not url:
@@ -194,6 +225,14 @@ class SiteMapper:
         
         return True
     
+    """
+    Extracts and processes links from a webpage using Jina Reader API.
+    - Gets page content via Jina
+    - Parses HTML for links
+    - Normalizes and validates found URLs
+    - Handles special cases for specific domains
+    - Saves responses for debugging
+    """
     async def extract_links(self, url: str) -> List[str]:
         """Extract links from a page using Jina Reader API"""
         try:
@@ -279,6 +318,13 @@ class SiteMapper:
             print(f"Error extracting links from {url}: {e}")
             return [], f"Error: {str(e)}"
     
+    """
+    Uses Gemini AI to evaluate how relevant a page's content is to the search prompt.
+    Returns:
+    - Relevance score (0.0-1.0)
+    - Explanation of the score
+    - Content summary
+    """
     async def evaluate_content_relevance(self, url: str, content: str) -> Tuple[float, str, str]:
         """
         Evaluate the relevance of the content to the search prompt
@@ -338,6 +384,13 @@ class SiteMapper:
         
         return "{}"  # Return empty object if no JSON found
     
+    """
+    Main crawling logic that:
+    - Implements breadth-first search with relevance prioritization
+    - Manages crawl depth and page limits
+    - Updates site map data structure
+    - Tracks progress with tqdm
+    """
     async def crawl(self):
         """Crawl the website and build a site map with relevance scores"""
         print(f"Starting crawl of {self.base_url} with prompt: {self.search_prompt}")
@@ -422,6 +475,14 @@ class SiteMapper:
             
         return self.site_map[parent_url].relevance_score
     
+    """
+    Creates detailed reports of the crawl results:
+    - JSON data export
+    - Markdown report with:
+      - Crawl statistics
+      - Most relevant pages
+      - Complete site structure
+    """
     def generate_site_map_report(self):
         """Generate a comprehensive report of the site map with relevance scores"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -493,6 +554,12 @@ class SiteMapper:
         
         return filename, md_filename
     
+    """
+    Creates two network visualizations:
+    1. Complete site map showing all visited pages
+    2. High-relevance view showing only the most relevant pages
+    Uses NetworkX for graph creation and Matplotlib for visualization
+    """
     def visualize_site_map(self):
         """Create a visual representation of the site map"""
         # Create a directed graph
@@ -607,6 +674,11 @@ class SiteMapper:
         
         return viz_filename, high_rel_viz_filename
 
+"""
+Command-line interface for the site mapper.
+Usage: python site_mapper.py <base_url> <search_prompt> [max_depth] [max_pages]
+Handles special cases for specific domains and outputs crawl statistics.
+"""
 async def main():
     if len(sys.argv) < 3:
         print("Usage: python site_mapper.py <base_url> <search_prompt> [max_depth] [max_pages]")
