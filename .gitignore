@@ -1,0 +1,4 @@
+.env
+/venvpromptscrape/
+jina_responses/*
+__pycache__/*
