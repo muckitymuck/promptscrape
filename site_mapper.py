@@ -203,7 +203,6 @@ class SiteMapper:
             '/login', '/logout', '/signin', '/signout', '/register',  # Auth paths
             '/cart', '/checkout', '/basket', '/shopping-cart',  # E-commerce paths
             '/account', '/profile', '/user/',  # User account paths
-            '/search', '/tag/', '/category/',  # Search/taxonomy paths that often duplicate content
             '/feed/', '/rss/', '/atom/',  # Feed paths
             '/print/', '/email/', '/share/',  # Utility paths
             '/comment', '/trackback', '/pingback'  # Comment paths
@@ -330,30 +329,73 @@ class SiteMapper:
         Evaluate the relevance of the content to the search prompt
         Returns (relevance_score, reason, content_summary)
         """
-        prompt = f"""
-        Evaluate the relevance of the following web page content to this search prompt:
+        # Check if this is a search results page
+        is_search_page = 'search' in url.lower() or 'q=' in url.lower() or 'query=' in url.lower()
         
-        SEARCH PROMPT: "{self.search_prompt}"
+        # Special handling for e-commerce sites
+        is_ecommerce = any(domain in url.lower() for domain in [
+            'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+            'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+        ])
         
-        For the content, provide:
-        1. A relevance score from 0.0 to 1.0, where:
-           - 1.0: Highly relevant, contains exactly what we're looking for
-           - 0.7-0.9: Very relevant, contains most of what we're looking for
-           - 0.4-0.6: Somewhat relevant, contains some useful information
-           - 0.1-0.3: Slightly relevant, has minimal useful information
-           - 0.0: Not relevant at all
-        
-        2. A brief explanation for the score (1-2 sentences)
-        
-        3. A concise summary of the page content (3-5 sentences)
-        
-        Format your response as a valid JSON object with these fields:
-        - relevance_score: float
-        - relevance_reason: string
-        - content_summary: string
-        
-        URL being evaluated: {url}
-        """
+        # For search pages on e-commerce sites, adjust the prompt to recognize their value
+        if is_search_page and is_ecommerce:
+            prompt = f"""
+            Evaluate the relevance of the following web page content to this search prompt:
+            
+            SEARCH PROMPT: "{self.search_prompt}"
+            
+            IMPORTANT: This is a search results page on an e-commerce site. Even if it doesn't directly contain 
+            technical specifications, it may contain valuable links to product pages that do have specifications.
+            Consider this page relevant if:
+            1. It shows search results related to the products we're looking for
+            2. It contains links to product detail pages that likely have specifications
+            3. It shows product categories or filters that could lead to specification pages
+            
+            For the content, provide:
+            1. A relevance score from 0.0 to 1.0, where:
+               - 1.0: Highly relevant, contains exactly what we're looking for or direct links to it
+               - 0.7-0.9: Very relevant, contains most of what we're looking for or links to it
+               - 0.4-0.6: Somewhat relevant, contains some useful information or navigation
+               - 0.1-0.3: Slightly relevant, has minimal useful information
+               - 0.0: Not relevant at all
+            
+            2. A brief explanation for the score (1-2 sentences)
+            
+            3. A concise summary of the page content (3-5 sentences)
+            
+            Format your response as a valid JSON object with these fields:
+            - relevance_score: float
+            - relevance_reason: string
+            - content_summary: string
+            
+            URL being evaluated: {url}
+            """
+        else:
+            prompt = f"""
+            Evaluate the relevance of the following web page content to this search prompt:
+            
+            SEARCH PROMPT: "{self.search_prompt}"
+            
+            For the content, provide:
+            1. A relevance score from 0.0 to 1.0, where:
+               - 1.0: Highly relevant, contains exactly what we're looking for
+               - 0.7-0.9: Very relevant, contains most of what we're looking for
+               - 0.4-0.6: Somewhat relevant, contains some useful information
+               - 0.1-0.3: Slightly relevant, has minimal useful information
+               - 0.0: Not relevant at all
+            
+            2. A brief explanation for the score (1-2 sentences)
+            
+            3. A concise summary of the page content (3-5 sentences)
+            
+            Format your response as a valid JSON object with these fields:
+            - relevance_score: float
+            - relevance_reason: string
+            - content_summary: string
+            
+            URL being evaluated: {url}
+            """
         
         try:
             # Generate response from Gemini
@@ -463,6 +505,37 @@ class SiteMapper:
         print(f"Crawl completed. Visited {len(self.visited_urls)} pages out of {len(self.site_map)} discovered URLs.")
         
         return self.site_map
+    
+    def _is_product_or_search_page(self, url: str) -> bool:
+        """Check if a URL is likely a product page or search results page"""
+        if not url:
+            return False
+            
+        parsed_url = urlparse(url)
+        
+        # Check for product page indicators
+        product_indicators = [
+            '/product/', '/item/', '/detail/', '/specs/', '/laptop/', '/desktop/', '/computer/',
+            '/victus/', '/omen/', '/pavilion/', '/envy/', '/elitebook/', '/probook/',  # HP specific
+            '/xps/', '/inspiron/', '/alienware/', '/latitude/', '/precision/',  # Dell specific
+            '/thinkpad/', '/ideapad/', '/yoga/', '/legion/',  # Lenovo specific
+            '/rog/', '/tuf/', '/zenbook/', '/vivobook/',  # Asus specific
+            '/predator/', '/nitro/', '/swift/', '/aspire/',  # Acer specific
+            '/surface/',  # Microsoft specific
+            '/model/', '/series/', '/configuration/', '/tech/', '/feature/'
+        ]
+        
+        # Check for search page indicators
+        is_search_page = 'search' in parsed_url.path.lower() or 'q=' in parsed_url.query.lower() or 'query=' in parsed_url.query.lower()
+        
+        # Check if it's an e-commerce site
+        is_ecommerce = any(domain in url.lower() for domain in [
+            'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+            'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+        ])
+        
+        # Return True if it's a product page or a search page on an e-commerce site
+        return any(indicator in parsed_url.path.lower() for indicator in product_indicators) or (is_search_page and is_ecommerce)
     
     def _get_parent_relevance(self, url: str) -> float:
         """Get the relevance score of the parent URL to help prioritize crawling"""

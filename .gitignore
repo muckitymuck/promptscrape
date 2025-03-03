@@ -1,4 +1,6 @@
 .env
 /venvpromptscrape/
-jina_responses/*
+/jina_responses/*
 __pycache__/*
+/site_maps/*
+/specs_output/*
