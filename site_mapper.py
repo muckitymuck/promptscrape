@@ -196,6 +196,22 @@ class SiteMapper:
         
         if any(parsed_url.path.lower().endswith(ext) for ext in skip_extensions):
             return False
+        
+        # Check for product or specification pages - these should always be allowed
+        is_product_page = any(indicator in parsed_url.path.lower() for indicator in [
+            '/product/', '/item/', '/detail/', '/specs/', '/laptop/', '/desktop/', '/computer/',
+            '/victus/', '/omen/', '/pavilion/', '/envy/', '/elitebook/', '/probook/',  # HP specific
+            '/xps/', '/inspiron/', '/alienware/', '/latitude/', '/precision/',  # Dell specific
+            '/thinkpad/', '/ideapad/', '/yoga/', '/legion/',  # Lenovo specific
+            '/rog/', '/tuf/', '/zenbook/', '/vivobook/',  # Asus specific
+            '/predator/', '/nitro/', '/swift/', '/aspire/',  # Acer specific
+            '/surface/',  # Microsoft specific
+            '/model/', '/series/', '/configuration/', '/tech/', '/feature/'
+        ])
+        
+        # If it's a product or specification page, always allow it
+        if is_product_page:
+            return True
             
         # Skip common non-content URLs
         skip_patterns = [
@@ -203,14 +219,23 @@ class SiteMapper:
             '/login', '/logout', '/signin', '/signout', '/register',  # Auth paths
             '/cart', '/checkout', '/basket', '/shopping-cart',  # E-commerce paths
             '/account', '/profile', '/user/',  # User account paths
-            '/search', '/tag/', '/category/',  # Search/taxonomy paths that often duplicate content
             '/feed/', '/rss/', '/atom/',  # Feed paths
             '/print/', '/email/', '/share/',  # Utility paths
             '/comment', '/trackback', '/pingback'  # Comment paths
         ]
         
+        # Don't skip search pages on e-commerce sites
+        is_search_page = 'search' in parsed_url.path.lower() or 'q=' in parsed_url.query.lower()
+        is_ecommerce = any(domain in url.lower() for domain in [
+            'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+            'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+        ])
+        
         # Check if the URL path contains any of the skip patterns
         if any(pattern in parsed_url.path.lower() for pattern in skip_patterns):
+            # Exception for search pages on e-commerce sites
+            if is_search_page and is_ecommerce:
+                return True
             return False
         
         # For query parameters, be selective but not overly restrictive
@@ -265,7 +290,20 @@ class SiteMapper:
             print(f"Extracting links from {url}")
             print(f"Page title: {title}")
             
+            # Detect if this is a search results page
+            is_search_page = False
+            if 'search' in url.lower() or 'q=' in url.lower() or 'query=' in url.lower():
+                is_search_page = True
+                print("Detected search results page - will prioritize product links")
+            
+            # Special handling for known e-commerce sites
+            is_ecommerce = any(domain in url.lower() for domain in [
+                'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+                'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+            ])
+            
             # Extract all links from the page
+            product_links = []
             for a_tag in soup.find_all('a', href=True):
                 href = a_tag['href']
                 all_links_found.append(href)
@@ -273,15 +311,45 @@ class SiteMapper:
                 # Normalize the URL
                 normalized_url = self.normalize_url(href, url)
                 
+                if not normalized_url:
+                    continue
+                
                 # Check if it's a valid URL to crawl
-                if normalized_url and self.is_valid_url(normalized_url) and normalized_url not in links:
+                if self.is_valid_url(normalized_url) and normalized_url not in links:
+                    # For search pages on e-commerce sites, prioritize product links
+                    if is_search_page and is_ecommerce:
+                        # Look for product page indicators in the URL or link text
+                        link_text = a_tag.get_text().strip().lower()
+                        is_product_link = any(indicator in normalized_url.lower() or indicator in link_text for indicator in [
+                            'product', 'item', 'detail', 'spec', 'laptop', 'desktop', 'computer',
+                            'victus', 'omen', 'pavilion', 'envy', 'elitebook', 'probook',  # HP specific
+                            'xps', 'inspiron', 'alienware', 'latitude', 'precision',  # Dell specific
+                            'thinkpad', 'ideapad', 'yoga', 'legion',  # Lenovo specific
+                            'rog', 'tuf', 'zenbook', 'vivobook',  # Asus specific
+                            'predator', 'nitro', 'swift', 'aspire',  # Acer specific
+                            'surface',  # Microsoft specific
+                            'model', 'series', 'configuration', 'tech', 'feature'
+                        ])
+                        
+                        # Also check for product identifiers like model numbers
+                        has_model_number = bool(re.search(r'[a-zA-Z0-9]+-[a-zA-Z0-9]+', link_text)) or bool(re.search(r'[a-zA-Z0-9]+-[a-zA-Z0-9]+', normalized_url))
+                        
+                        if is_product_link or has_model_number:
+                            print(f"  Found product link: {normalized_url}")
+                            product_links.append(normalized_url)
+                        else:
+                            links.append(normalized_url)
                     # For ROG website, prioritize product category links
-                    if 'rog.asus.com' in url and any(category in normalized_url for category in 
+                    elif 'rog.asus.com' in url and any(category in normalized_url for category in 
                                                     ['-group', '/group/', '/series/', '/models/', '/specs/']):
                         # Add to the beginning of the list to prioritize
                         links.insert(0, normalized_url)
                     else:
                         links.append(normalized_url)
+            
+            # Add product links at the beginning of the links list to prioritize them
+            if product_links:
+                links = product_links + links
             
             # Debug information
             if links:
@@ -330,30 +398,73 @@ class SiteMapper:
         Evaluate the relevance of the content to the search prompt
         Returns (relevance_score, reason, content_summary)
         """
-        prompt = f"""
-        Evaluate the relevance of the following web page content to this search prompt:
+        # Check if this is a search results page
+        is_search_page = 'search' in url.lower() or 'q=' in url.lower() or 'query=' in url.lower()
         
-        SEARCH PROMPT: "{self.search_prompt}"
+        # Special handling for e-commerce sites
+        is_ecommerce = any(domain in url.lower() for domain in [
+            'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+            'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+        ])
         
-        For the content, provide:
-        1. A relevance score from 0.0 to 1.0, where:
-           - 1.0: Highly relevant, contains exactly what we're looking for
-           - 0.7-0.9: Very relevant, contains most of what we're looking for
-           - 0.4-0.6: Somewhat relevant, contains some useful information
-           - 0.1-0.3: Slightly relevant, has minimal useful information
-           - 0.0: Not relevant at all
-        
-        2. A brief explanation for the score (1-2 sentences)
-        
-        3. A concise summary of the page content (3-5 sentences)
-        
-        Format your response as a valid JSON object with these fields:
-        - relevance_score: float
-        - relevance_reason: string
-        - content_summary: string
-        
-        URL being evaluated: {url}
-        """
+        # For search pages on e-commerce sites, adjust the prompt to recognize their value
+        if is_search_page and is_ecommerce:
+            prompt = f"""
+            Evaluate the relevance of the following web page content to this search prompt:
+            
+            SEARCH PROMPT: "{self.search_prompt}"
+            
+            IMPORTANT: This is a search results page on an e-commerce site. Even if it doesn't directly contain 
+            technical specifications, it may contain valuable links to product pages that do have specifications.
+            Consider this page relevant if:
+            1. It shows search results related to the products we're looking for
+            2. It contains links to product detail pages that likely have specifications
+            3. It shows product categories or filters that could lead to specification pages
+            
+            For the content, provide:
+            1. A relevance score from 0.0 to 1.0, where:
+               - 1.0: Highly relevant, contains exactly what we're looking for or direct links to it
+               - 0.7-0.9: Very relevant, contains most of what we're looking for or links to it
+               - 0.4-0.6: Somewhat relevant, contains some useful information or navigation
+               - 0.1-0.3: Slightly relevant, has minimal useful information
+               - 0.0: Not relevant at all
+            
+            2. A brief explanation for the score (1-2 sentences)
+            
+            3. A concise summary of the page content (3-5 sentences)
+            
+            Format your response as a valid JSON object with these fields:
+            - relevance_score: float
+            - relevance_reason: string
+            - content_summary: string
+            
+            URL being evaluated: {url}
+            """
+        else:
+            prompt = f"""
+            Evaluate the relevance of the following web page content to this search prompt:
+            
+            SEARCH PROMPT: "{self.search_prompt}"
+            
+            For the content, provide:
+            1. A relevance score from 0.0 to 1.0, where:
+               - 1.0: Highly relevant, contains exactly what we're looking for
+               - 0.7-0.9: Very relevant, contains most of what we're looking for
+               - 0.4-0.6: Somewhat relevant, contains some useful information
+               - 0.1-0.3: Slightly relevant, has minimal useful information
+               - 0.0: Not relevant at all
+            
+            2. A brief explanation for the score (1-2 sentences)
+            
+            3. A concise summary of the page content (3-5 sentences)
+            
+            Format your response as a valid JSON object with these fields:
+            - relevance_score: float
+            - relevance_reason: string
+            - content_summary: string
+            
+            URL being evaluated: {url}
+            """
         
         try:
             # Generate response from Gemini
@@ -410,8 +521,18 @@ class SiteMapper:
             # Sort queue to prioritize breadth-first but also higher relevance paths
             # This helps ensure we map the entire site structure more effectively
             if len(self.visited_urls) > 5:  # After visiting a few pages, we can start prioritizing
-                # Sort by a combination of depth (primary) and parent relevance (secondary)
-                queue.sort(key=lambda x: (x[1], -self._get_parent_relevance(x[0])))
+                # Sort by a combination of factors:
+                # 1. Product pages and search results get highest priority
+                # 2. Parent relevance as secondary factor
+                # 3. Depth as tertiary factor
+                queue.sort(key=lambda x: (
+                    # First priority: Is it a product page or search page? (-1 for yes, 0 for no)
+                    -1 if self._is_product_or_search_page(x[0]) else 0,
+                    # Second priority: Parent relevance (negative to sort higher relevance first)
+                    -self._get_parent_relevance(x[0]),
+                    # Third priority: Depth (lower depth first)
+                    x[1]
+                ))
             
             current_url, depth = queue.pop(0)
             queued_urls.remove(current_url)  # Remove from tracking set
@@ -463,6 +584,37 @@ class SiteMapper:
         print(f"Crawl completed. Visited {len(self.visited_urls)} pages out of {len(self.site_map)} discovered URLs.")
         
         return self.site_map
+    
+    def _is_product_or_search_page(self, url: str) -> bool:
+        """Check if a URL is likely a product page or search results page"""
+        if not url:
+            return False
+            
+        parsed_url = urlparse(url)
+        
+        # Check for product page indicators
+        product_indicators = [
+            '/product/', '/item/', '/detail/', '/specs/', '/laptop/', '/desktop/', '/computer/',
+            '/victus/', '/omen/', '/pavilion/', '/envy/', '/elitebook/', '/probook/',  # HP specific
+            '/xps/', '/inspiron/', '/alienware/', '/latitude/', '/precision/',  # Dell specific
+            '/thinkpad/', '/ideapad/', '/yoga/', '/legion/',  # Lenovo specific
+            '/rog/', '/tuf/', '/zenbook/', '/vivobook/',  # Asus specific
+            '/predator/', '/nitro/', '/swift/', '/aspire/',  # Acer specific
+            '/surface/',  # Microsoft specific
+            '/model/', '/series/', '/configuration/', '/tech/', '/feature/'
+        ]
+        
+        # Check for search page indicators
+        is_search_page = 'search' in parsed_url.path.lower() or 'q=' in parsed_url.query.lower() or 'query=' in parsed_url.query.lower()
+        
+        # Check if it's an e-commerce site
+        is_ecommerce = any(domain in url.lower() for domain in [
+            'hp.com', 'dell.com', 'lenovo.com', 'asus.com', 'acer.com', 'microsoft.com',
+            'amazon.com', 'bestbuy.com', 'newegg.com', 'walmart.com', 'target.com'
+        ])
+        
+        # Return True if it's a product page or a search page on an e-commerce site
+        return any(indicator in parsed_url.path.lower() for indicator in product_indicators) or (is_search_page and is_ecommerce)
     
     def _get_parent_relevance(self, url: str) -> float:
         """Get the relevance score of the parent URL to help prioritize crawling"""
