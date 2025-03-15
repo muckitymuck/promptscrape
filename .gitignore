@@ -4,3 +4,4 @@
 __pycache__/*
 /site_maps/*
 /specs_output/*
+/analysis_results/*
